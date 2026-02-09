@@ -16,11 +16,16 @@ function clamp(n: number, min: number, max: number) {
   return Math.min(Math.max(n, min), max);
 }
 
+function randInt(min: number, max: number) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
 export default function Page() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const noBtnRef = useRef<HTMLButtonElement | null>(null);
 
   const [accepted, setAccepted] = useState(false);
+  const [declined, setDeclined] = useState(false);
 
   // --- Photos (put your images in /public/photos and update filenames if needed) ---
   const photos: Photo[] = useMemo(
@@ -43,190 +48,128 @@ export default function Page() {
   };
 
   const handleYes = () => {
+    setDeclined(false);
     setAccepted(true);
     popConfetti();
   };
 
-  // --- "Elastic + repelling magnet" No button physics ---
-  // No button stays next to Yes in layout; we animate it via translate() with a gentle spring + cursor repulsion.
-  // Goal: it never lets the cursor touch it, but it also shouldn't jitter/spaz.
-  const [noOffset, setNoOffset] = useState({ x: 0, y: 0 });
-
-  const posRef = useRef({ x: 0, y: 0 });
-  const velRef = useRef({ x: 0, y: 0 });
-  const mouseRef = useRef<{ x: number; y: number } | null>(null);
-
-  // Anchor (top-left) of the No button when offset is (0,0)
-  const anchorTopLeftRef = useRef<{ left: number; top: number } | null>(null);
-  const btnSizeRef = useRef<{ w: number; h: number } | null>(null);
-
-  const measureAnchor = () => {
-    if (!noBtnRef.current) return;
-    // Reset to anchor visually before measuring
-    posRef.current = { x: 0, y: 0 };
-    velRef.current = { x: 0, y: 0 };
-    setNoOffset({ x: 0, y: 0 });
-
-    requestAnimationFrame(() => {
-      if (!noBtnRef.current) return;
-      const r = noBtnRef.current.getBoundingClientRect();
-      anchorTopLeftRef.current = { left: r.left, top: r.top };
-      btnSizeRef.current = { w: r.width, h: r.height };
-    });
+  const handleNo = () => {
+    setAccepted(false);
+    setDeclined(true);
   };
 
+  // --- Teleporting "No" button (clickable, but very hard to click) ---
+  const [noPos, setNoPos] = useState<{ left: number; top: number } | null>(null);
+  const mouseRef = useRef<{ x: number; y: number } | null>(null);
+
+  const teleportNo = () => {
+    if (!noBtnRef.current) return;
+
+    const btn = noBtnRef.current.getBoundingClientRect();
+    const pad = 14;
+
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    // Keep it around the sides (top, bottom, left, right bands)
+    // and avoid the central card a bit by biasing to edges.
+    const side = randInt(0, 3); // 0=top,1=right,2=bottom,3=left
+    const band = 80; // distance from edge
+    let left = 0;
+    let top = 0;
+
+    const minL = pad;
+    const minT = pad;
+    const maxL = vw - btn.width - pad;
+    const maxT = vh - btn.height - pad;
+
+    if (side === 0) {
+      // top band
+      top = randInt(minT, clamp(band, minT, maxT));
+      left = randInt(minL, maxL);
+    } else if (side === 1) {
+      // right band
+      left = randInt(clamp(maxL - band, minL, maxL), maxL);
+      top = randInt(minT, maxT);
+    } else if (side === 2) {
+      // bottom band
+      top = randInt(clamp(maxT - band, minT, maxT), maxT);
+      left = randInt(minL, maxL);
+    } else {
+      // left band
+      left = randInt(minL, clamp(band, minL, maxL));
+      top = randInt(minT, maxT);
+    }
+
+    // If mouse is very close to target, re-roll once to reduce "teleport into cursor"
+    const m = mouseRef.current;
+    if (m) {
+      const cx = left + btn.width / 2;
+      const cy = top + btn.height / 2;
+      const d = Math.hypot(cx - m.x, cy - m.y);
+      if (d < 160) {
+        // re-roll quickly
+        const newSide = (side + randInt(1, 3)) % 4;
+        // quick deterministic re-roll
+        if (newSide === 0) {
+          top = randInt(minT, clamp(band, minT, maxT));
+          left = randInt(minL, maxL);
+        } else if (newSide === 1) {
+          left = randInt(clamp(maxL - band, minL, maxL), maxL);
+          top = randInt(minT, maxT);
+        } else if (newSide === 2) {
+          top = randInt(clamp(maxT - band, minT, maxT), maxT);
+          left = randInt(minL, maxL);
+        } else {
+          left = randInt(minL, clamp(band, minL, maxL));
+          top = randInt(minT, maxT);
+        }
+      }
+    }
+
+    setNoPos({ left: clamp(left, minL, maxL), top: clamp(top, minT, maxT) });
+  };
+
+  // Initial placement near the Yes button (then it starts teleporting when you approach)
   useEffect(() => {
-    measureAnchor();
-    const onResize = () => measureAnchor();
+    const t = setTimeout(() => {
+      // place it roughly beside the center card initially
+      setNoPos({ left: window.innerWidth / 2 + 120, top: window.innerHeight / 2 + 80 });
+    }, 0);
+
+    const onResize = () => {
+      teleportNo();
+    };
+
     window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener("resize", onResize);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Periodic teleport so it keeps "skittering" around the edges
   useEffect(() => {
-    if (!accepted) {
-      // Let it rebound to home
-      velRef.current = { x: 0, y: 0 };
-    }
-  }, [accepted]);
+    const id = window.setInterval(() => {
+      // Don’t teleport while the decline modal is open (so they can see/click other things)
+      if (!declined && !accepted) teleportNo();
+    }, 650); // quick but not nauseating
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [declined, accepted]);
 
-  useEffect(() => {
-    let raf = 0;
-    let last = performance.now();
+  const maybeTeleportIfClose = (mx: number, my: number) => {
+    if (!noBtnRef.current || !noPos) return;
+    const r = noBtnRef.current.getBoundingClientRect();
+    // If cursor is within a radius, teleport away immediately
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    const d = Math.hypot(cx - mx, cy - my);
 
-    const tick = (now: number) => {
-      const dt = Math.min(0.03, (now - last) / 1000); // stable dt cap
-      last = now;
-
-      const pos = posRef.current;
-      const vel = velRef.current;
-      const mouse = mouseRef.current;
-
-      // Gentler spring back to anchor
-      const k = 28; // stiffness (lower = less snap-back)
-      const c = 10; // damping
-
-      let ax = -k * pos.x - c * vel.x;
-      let ay = -k * pos.y - c * vel.y;
-
-      if (mouse && anchorTopLeftRef.current && btnSizeRef.current) {
-        const { w, h } = btnSizeRef.current;
-        const anchor = anchorTopLeftRef.current;
-
-        // Current center of the button on screen:
-        const cx = anchor.left + pos.x + w / 2;
-        const cy = anchor.top + pos.y + h / 2;
-
-        const dx = cx - mouse.x;
-        const dy = cy - mouse.y;
-        const d = Math.hypot(dx, dy);
-
-        // Smooth repulsion (no impulses) to avoid jitter
-        const influence = 175;
-        if (d < influence) {
-          const strength = 2000; // gentler than before
-          const t = 1 - d / influence; // 0..1
-          const ux = dx / Math.max(1, d);
-          const uy = dy / Math.max(1, d);
-
-          // ease curve (smooth near edge, stronger near center)
-          const ease = t * t;
-          ax += ux * strength * ease;
-          ay += uy * strength * ease;
-        }
-
-        // HARD SAFETY (gentle): if cursor enters the padded rectangle,
-        // nudge the position out WITHOUT a big velocity impulse.
-        const safe = 24;
-        const L = anchor.left + pos.x;
-        const T = anchor.top + pos.y;
-        const R = L + w;
-        const B = T + h;
-
-        const inX = mouse.x >= L - safe && mouse.x <= R + safe;
-        const inY = mouse.y >= T - safe && mouse.y <= B + safe;
-
-        if (inX && inY) {
-          const leftOverlap = mouse.x - (L - safe);
-          const rightOverlap = (R + safe) - mouse.x;
-          const topOverlap = mouse.y - (T - safe);
-          const botOverlap = (B + safe) - mouse.y;
-
-          const minX = Math.min(leftOverlap, rightOverlap);
-          const minY = Math.min(topOverlap, botOverlap);
-
-          const shove = 8; // small extra spacing
-          if (minX < minY) {
-            const dir = leftOverlap < rightOverlap ? -1 : 1;
-            pos.x += dir * (minX + shove) * 0.45; // partial correction = gentle
-            vel.x *= 0.35; // damp instead of impulse
-          } else {
-            const dir = topOverlap < botOverlap ? -1 : 1;
-            pos.y += dir * (minY + shove) * 0.45;
-            vel.y *= 0.35;
-          }
-        }
-      }
-
-      // Integrate (semi-implicit Euler)
-      vel.x += ax * dt;
-      vel.y += ay * dt;
-
-      // Cap velocity to prevent spazzing
-      const vMax = 850;
-      vel.x = clamp(vel.x, -vMax, vMax);
-      vel.y = clamp(vel.y, -vMax, vMax);
-
-      pos.x += vel.x * dt;
-      pos.y += vel.y * dt;
-
-      // Elastic band: clamp max distance from anchor (keeps it near its home)
-      const maxLen = 150;
-      const len = Math.hypot(pos.x, pos.y);
-      if (len > maxLen) {
-        const s = maxLen / Math.max(1, len);
-        pos.x *= s;
-        pos.y *= s;
-        vel.x *= 0.55;
-        vel.y *= 0.55;
-      }
-
-      // Keep button on-screen (very soft)
-      if (anchorTopLeftRef.current && btnSizeRef.current) {
-        const { w, h } = btnSizeRef.current;
-        const anchor = anchorTopLeftRef.current;
-
-        const pad = 10;
-        const minL = pad;
-        const minT = pad;
-        const maxL = window.innerWidth - w - pad;
-        const maxT = window.innerHeight - h - pad;
-
-        const L = anchor.left + pos.x;
-        const T = anchor.top + pos.y;
-
-        const clampedL = clamp(L, minL, maxL);
-        const clampedT = clamp(T, minT, maxT);
-
-        // apply a gentle correction rather than a bounce
-        pos.x += (clampedL - L) * 0.7;
-        pos.y += (clampedT - T) * 0.7;
-
-        vel.x *= 0.85;
-        vel.y *= 0.85;
-      }
-
-      posRef.current = pos;
-      velRef.current = vel;
-
-      setNoOffset({ x: pos.x, y: pos.y });
-
-      raf = requestAnimationFrame(tick);
-    };
-
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, []);
+    const danger = 140; // make it hard to get close
+    if (d < danger) teleportNo();
+  };
 
   return (
     <main
@@ -234,13 +177,17 @@ export default function Page() {
       className="relative min-h-screen overflow-hidden bg-gradient-to-br from-rose-100 via-pink-100 to-red-100"
       onMouseMove={(e) => {
         mouseRef.current = { x: e.clientX, y: e.clientY };
+        maybeTeleportIfClose(e.clientX, e.clientY);
       }}
       onMouseLeave={() => {
         mouseRef.current = null;
       }}
       onTouchMove={(e) => {
         const t = e.touches[0];
-        if (t) mouseRef.current = { x: t.clientX, y: t.clientY };
+        if (t) {
+          mouseRef.current = { x: t.clientX, y: t.clientY };
+          maybeTeleportIfClose(t.clientX, t.clientY);
+        }
       }}
       onTouchEnd={() => {
         mouseRef.current = null;
@@ -286,26 +233,36 @@ export default function Page() {
               Yes 💖
             </button>
 
-            <button
-              ref={noBtnRef}
-              type="button"
-              className="rounded-2xl bg-zinc-900/85 px-7 py-4 text-lg font-bold text-white shadow-lg select-none"
-              style={{
-                transform: `translate(${noOffset.x}px, ${noOffset.y}px)`,
-                willChange: "transform",
-                touchAction: "none",
-                // Cursor can never actually hover/click it (and that removes edge-case "touch").
-                pointerEvents: "none",
-              }}
-              aria-label="No"
-            >
+            {/* Placeholder so the UI reads "Yes / No" even while real No teleports */}
+            <div className="rounded-2xl bg-zinc-900/10 px-7 py-4 text-lg font-bold text-zinc-900/30 shadow-lg">
               No 🙃
-            </button>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* Slide-up modal */}
+      {/* Real teleporting NO button (clickable) */}
+      <button
+        ref={noBtnRef}
+        type="button"
+        className="fixed z-30 rounded-2xl bg-zinc-900/90 px-7 py-4 text-lg font-bold text-white shadow-lg transition-transform active:scale-[0.98]"
+        style={{
+          left: noPos?.left ?? -9999,
+          top: noPos?.top ?? -9999,
+        }}
+        onMouseEnter={() => teleportNo()}
+        onMouseDown={() => teleportNo()} // makes it VERY hard to click
+        onClick={(e) => {
+          // If they actually click, show the "sad" modal.
+          e.stopPropagation();
+          handleNo();
+        }}
+        aria-label="No"
+      >
+        No 🙃
+      </button>
+
+      {/* YES modal */}
       <div
         className={[
           "fixed inset-x-0 bottom-0 z-20 mx-auto w-full max-w-2xl px-6 pb-6",
@@ -324,6 +281,32 @@ export default function Page() {
 
             <button
               onClick={() => setAccepted(false)}
+              className="mt-6 rounded-2xl bg-zinc-900 px-6 py-3 font-semibold text-white transition hover:scale-[1.02] active:scale-[0.98]"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* NO modal */}
+      <div
+        className={[
+          "fixed inset-x-0 bottom-0 z-20 mx-auto w-full max-w-2xl px-6 pb-6",
+          "transition-transform duration-500 ease-out",
+          declined ? "translate-y-0" : "translate-y-[120%]",
+        ].join(" ")}
+        aria-hidden={!declined}
+      >
+        <div className="rounded-[2rem] bg-white p-6 shadow-2xl sm:p-8">
+          <div className="text-center">
+            <div className="text-2xl font-extrabold text-zinc-900 sm:text-3xl">oh… 😢</div>
+            <div className="mt-2 text-lg text-zinc-700 sm:text-xl">
+              I guess you really don’t want to be my valentine. :(
+            </div>
+
+            <button
+              onClick={() => setDeclined(false)}
               className="mt-6 rounded-2xl bg-zinc-900 px-6 py-3 font-semibold text-white transition hover:scale-[1.02] active:scale-[0.98]"
             >
               Close
