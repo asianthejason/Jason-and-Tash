@@ -29,8 +29,8 @@ export default function Page() {
       { src: "/photos/2.jpg", alt: "Photo 2", style: { top: "12%", right: "7%", transform: "rotate(7deg)" } },
       { src: "/photos/3.jpg", alt: "Photo 3", style: { bottom: "10%", left: "10%", transform: "rotate(5deg)" } },
       { src: "/photos/4.jpg", alt: "Photo 4", style: { bottom: "14%", right: "9%", transform: "rotate(-7deg)" } },
-      { src: "/photos/5.jpg", alt: "Photo 5", style: { top: "42%", left: "2%", transform: "rotate(10deg)" } },
-      { src: "/photos/6.jpg", alt: "Photo 6", style: { top: "46%", right: "2%", transform: "rotate(-10deg)" } },
+      { src: "/photos/5.JPG", alt: "Photo 5", style: { top: "42%", left: "2%", transform: "rotate(10deg)" } },
+      { src: "/photos/6.JPG", alt: "Photo 6", style: { top: "46%", right: "2%", transform: "rotate(-10deg)" } },
     ],
     []
   );
@@ -48,7 +48,8 @@ export default function Page() {
   };
 
   // --- "Elastic + repelling magnet" No button physics ---
-  // No button stays next to Yes in layout; we animate it via translate() with a spring + cursor repulsion.
+  // No button stays next to Yes in layout; we animate it via translate() with a gentle spring + cursor repulsion.
+  // Goal: it never lets the cursor touch it, but it also shouldn't jitter/spaz.
   const [noOffset, setNoOffset] = useState({ x: 0, y: 0 });
 
   const posRef = useRef({ x: 0, y: 0 });
@@ -94,16 +95,16 @@ export default function Page() {
     let last = performance.now();
 
     const tick = (now: number) => {
-      const dt = Math.min(0.028, (now - last) / 1000); // smaller cap for stability
+      const dt = Math.min(0.03, (now - last) / 1000); // stable dt cap
       last = now;
 
       const pos = posRef.current;
       const vel = velRef.current;
       const mouse = mouseRef.current;
 
-      // Spring back to anchor: F = -k x - c v
-      const k = 65; // stiffness
-      const c = 14; // damping
+      // Gentler spring back to anchor
+      const k = 28; // stiffness (lower = less snap-back)
+      const c = 10; // damping
 
       let ax = -k * pos.x - c * vel.x;
       let ay = -k * pos.y - c * vel.y;
@@ -120,21 +121,23 @@ export default function Page() {
         const dy = cy - mouse.y;
         const d = Math.hypot(dx, dy);
 
-        // Stronger, earlier repulsion so cursor never reaches it
-        const influence = 190; // reacts earlier
+        // Smooth repulsion (no impulses) to avoid jitter
+        const influence = 175;
         if (d < influence) {
-          const strength = 4200; // stronger repel
+          const strength = 2000; // gentler than before
           const t = 1 - d / influence; // 0..1
           const ux = dx / Math.max(1, d);
           const uy = dy / Math.max(1, d);
 
-          ax += ux * strength * t * t;
-          ay += uy * strength * t * t;
+          // ease curve (smooth near edge, stronger near center)
+          const ease = t * t;
+          ax += ux * strength * ease;
+          ay += uy * strength * ease;
         }
 
-        // HARD SAFETY: if cursor ever enters an expanded rectangle around the button,
-        // immediately move the button out along the minimum-overlap direction.
-        const safe = 26; // extra buffer around button (prevents "touch")
+        // HARD SAFETY (gentle): if cursor enters the padded rectangle,
+        // nudge the position out WITHOUT a big velocity impulse.
+        const safe = 24;
         const L = anchor.left + pos.x;
         const T = anchor.top + pos.y;
         const R = L + w;
@@ -149,20 +152,18 @@ export default function Page() {
           const topOverlap = mouse.y - (T - safe);
           const botOverlap = (B + safe) - mouse.y;
 
-          // Move out along the smallest overlap axis (fastest exit)
           const minX = Math.min(leftOverlap, rightOverlap);
           const minY = Math.min(topOverlap, botOverlap);
 
+          const shove = 8; // small extra spacing
           if (minX < minY) {
-            // push horizontally
             const dir = leftOverlap < rightOverlap ? -1 : 1;
-            pos.x += dir * (minX + 8);
-            vel.x = dir * 1200; // impulse
+            pos.x += dir * (minX + shove) * 0.45; // partial correction = gentle
+            vel.x *= 0.35; // damp instead of impulse
           } else {
-            // push vertically
             const dir = topOverlap < botOverlap ? -1 : 1;
-            pos.y += dir * (minY + 8);
-            vel.y = dir * 1200; // impulse
+            pos.y += dir * (minY + shove) * 0.45;
+            vel.y *= 0.35;
           }
         }
       }
@@ -171,11 +172,16 @@ export default function Page() {
       vel.x += ax * dt;
       vel.y += ay * dt;
 
+      // Cap velocity to prevent spazzing
+      const vMax = 850;
+      vel.x = clamp(vel.x, -vMax, vMax);
+      vel.y = clamp(vel.y, -vMax, vMax);
+
       pos.x += vel.x * dt;
       pos.y += vel.y * dt;
 
-      // Elastic band: clamp max distance from anchor
-      const maxLen = 170;
+      // Elastic band: clamp max distance from anchor (keeps it near its home)
+      const maxLen = 150;
       const len = Math.hypot(pos.x, pos.y);
       if (len > maxLen) {
         const s = maxLen / Math.max(1, len);
@@ -185,7 +191,7 @@ export default function Page() {
         vel.y *= 0.55;
       }
 
-      // Keep button on-screen
+      // Keep button on-screen (very soft)
       if (anchorTopLeftRef.current && btnSizeRef.current) {
         const { w, h } = btnSizeRef.current;
         const anchor = anchorTopLeftRef.current;
@@ -196,20 +202,18 @@ export default function Page() {
         const maxL = window.innerWidth - w - pad;
         const maxT = window.innerHeight - h - pad;
 
-        let L = anchor.left + pos.x;
-        let T = anchor.top + pos.y;
+        const L = anchor.left + pos.x;
+        const T = anchor.top + pos.y;
 
         const clampedL = clamp(L, minL, maxL);
         const clampedT = clamp(T, minT, maxT);
 
-        if (clampedL !== L) {
-          pos.x += clampedL - L;
-          vel.x *= -0.25;
-        }
-        if (clampedT !== T) {
-          pos.y += clampedT - T;
-          vel.y *= -0.25;
-        }
+        // apply a gentle correction rather than a bounce
+        pos.x += (clampedL - L) * 0.7;
+        pos.y += (clampedT - T) * 0.7;
+
+        vel.x *= 0.85;
+        vel.y *= 0.85;
       }
 
       posRef.current = pos;
@@ -290,8 +294,7 @@ export default function Page() {
                 transform: `translate(${noOffset.x}px, ${noOffset.y}px)`,
                 willChange: "transform",
                 touchAction: "none",
-                // Extra guarantee: cursor can never "touch" it (no hover/click),
-                // while still looking like a normal button.
+                // Cursor can never actually hover/click it (and that removes edge-case "touch").
                 pointerEvents: "none",
               }}
               aria-label="No"
