@@ -1,7 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import confetti from "canvas-confetti";
+
+// canvas-confetti sometimes lacks TS types depending on setup; require avoids build type errors.
+ // eslint-disable-next-line @typescript-eslint/no-var-requires
+const confetti = require("canvas-confetti");
 
 type Photo = {
   src: string;
@@ -9,19 +12,17 @@ type Photo = {
   style: React.CSSProperties;
 };
 
+function clamp(n: number, min: number, max: number) {
+  return Math.min(Math.max(n, min), max);
+}
+
 export default function Page() {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const yesBtnRef = useRef<HTMLButtonElement | null>(null);
   const noBtnRef = useRef<HTMLButtonElement | null>(null);
 
   const [accepted, setAccepted] = useState(false);
-  const acceptedRef = useRef(false);
 
-
-  // "No" button is free to move, but it should START beside "Yes"
-  const [noPos, setNoPos] = useState<{ left: number; top: number } | null>(null);
-
-  // Placeholders — add your images in /public/photos and update these filenames
+  // --- Photos (put your images in /public/photos and update filenames if needed) ---
   const photos: Photo[] = useMemo(
     () => [
       { src: "/photos/1.jpg", alt: "Photo 1", style: { top: "8%", left: "6%", transform: "rotate(-6deg)" } },
@@ -34,100 +35,189 @@ export default function Page() {
     []
   );
 
-  const placeNoNextToYes = () => {
-    if (!yesBtnRef.current || !noBtnRef.current) return;
-
-    const yes = yesBtnRef.current.getBoundingClientRect();
-    const no = noBtnRef.current.getBoundingClientRect();
-
-    const gap = 14;
-
-    // Position "No" just to the right of "Yes" (same vertical alignment)
-    setNoPos({
-      left: yes.right + gap,
-      top: yes.top + (yes.height - no.height) / 2,
-    });
-  };
-
-  useEffect(() => {
-    // Wait a tick so the buttons have measured sizes
-    const t = setTimeout(() => placeNoNextToYes(), 0);
-
-    const onResize = () => {
-      // If not accepted yet, keep it nicely positioned by Yes on resize
-      if (!acceptedRef.current) placeNoNextToYes();
-    };
-
-    window.addEventListener("resize", onResize);
-    return () => {
-      clearTimeout(t);
-      window.removeEventListener("resize", onResize);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
+  // --- Confetti ---
   const popConfetti = () => {
-    // a few bursts
-    confetti({ particleCount: 120, spread: 70, origin: { y: 0.7 } });
-    setTimeout(() => confetti({ particleCount: 80, spread: 100, origin: { x: 0.2, y: 0.6 } }), 150);
-    setTimeout(() => confetti({ particleCount: 80, spread: 100, origin: { x: 0.8, y: 0.6 } }), 250);
+    confetti({ particleCount: 120, spread: 70, origin: { y: 0.72 } });
+    setTimeout(() => confetti({ particleCount: 90, spread: 100, origin: { x: 0.2, y: 0.6 } }), 140);
+    setTimeout(() => confetti({ particleCount: 90, spread: 100, origin: { x: 0.8, y: 0.6 } }), 240);
   };
 
   const handleYes = () => {
-    acceptedRef.current = true;
     setAccepted(true);
     popConfetti();
   };
 
-  // Keep the "No" always teasingly close to the cursor while still escaping.
-  const moveNoAway = (clientX: number, clientY: number) => {
+  // --- "Elastic + repelling magnet" No button physics ---
+  // We keep the No button in the flex row (next to Yes), and animate it using translate().
+  // Anchor (0,0) is "beside Yes". The button is pulled back to anchor by a spring, and
+  // pushed away from the cursor when the cursor gets close.
+  const [noOffset, setNoOffset] = useState({ x: 0, y: 0 });
+
+  const posRef = useRef({ x: 0, y: 0 });
+  const velRef = useRef({ x: 0, y: 0 });
+  const mouseRef = useRef<{ x: number; y: number } | null>(null);
+
+  // Anchor position (top-left) of the No button when offset is (0,0)
+  const anchorTopLeftRef = useRef<{ left: number; top: number } | null>(null);
+  const btnSizeRef = useRef<{ w: number; h: number } | null>(null);
+
+  const measureAnchor = () => {
     if (!noBtnRef.current) return;
+    // Reset to anchor visually before measuring
+    posRef.current = { x: 0, y: 0 };
+    velRef.current = { x: 0, y: 0 };
+    setNoOffset({ x: 0, y: 0 });
 
-    const btn = noBtnRef.current.getBoundingClientRect();
-
-    // Tune these to taste:
-    const MIN_R = 90; // minimum distance away
-    const MAX_R = 160; // never farther than this
-    const pad = 12;
-
-    // Pick a random angle and radius in [MIN_R, MAX_R]
-    const angle = Math.random() * Math.PI * 2;
-    const r = MIN_R + Math.random() * (MAX_R - MIN_R);
-
-    let left = clientX + Math.cos(angle) * r - btn.width / 2;
-    let top = clientY + Math.sin(angle) * r - btn.height / 2;
-
-    // Clamp inside viewport
-    const maxL = window.innerWidth - btn.width - pad;
-    const maxT = window.innerHeight - btn.height - pad;
-
-    left = Math.min(Math.max(pad, left), maxL);
-    top = Math.min(Math.max(pad, top), maxT);
-
-    setNoPos({ left, top });
+    // Next tick to ensure DOM has applied transform reset
+    requestAnimationFrame(() => {
+      if (!noBtnRef.current) return;
+      const r = noBtnRef.current.getBoundingClientRect();
+      anchorTopLeftRef.current = { left: r.left, top: r.top };
+      btnSizeRef.current = { w: r.width, h: r.height };
+    });
   };
+
+  useEffect(() => {
+    measureAnchor();
+    const onResize = () => {
+      // Re-anchor on resize (keeps it beside Yes)
+      measureAnchor();
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // When closing the modal, let the No button calmly return to anchor
+  useEffect(() => {
+    if (!accepted) {
+      // small reset so it feels like it rebounds back
+      // (physics will do the rest)
+      velRef.current = { x: 0, y: 0 };
+    }
+  }, [accepted]);
+
+  useEffect(() => {
+    let raf = 0;
+    let last = performance.now();
+
+    const tick = (now: number) => {
+      const dt = Math.min(0.033, (now - last) / 1000); // cap dt for stability
+      last = now;
+
+      const pos = posRef.current;
+      const vel = velRef.current;
+      const mouse = mouseRef.current;
+
+      // Spring back to anchor: F = -k x - c v
+      const k = 55; // stiffness
+      const c = 12; // damping
+
+      let ax = -k * pos.x - c * vel.x;
+      let ay = -k * pos.y - c * vel.y;
+
+      // Repel from cursor if close ("magnet")
+      if (mouse && anchorTopLeftRef.current && btnSizeRef.current) {
+        const { w, h } = btnSizeRef.current;
+        const anchor = anchorTopLeftRef.current;
+
+        // Current center of the button on screen:
+        const cx = anchor.left + pos.x + w / 2;
+        const cy = anchor.top + pos.y + h / 2;
+
+        const dx = cx - mouse.x;
+        const dy = cy - mouse.y;
+        const d = Math.hypot(dx, dy);
+
+        const influence = 140; // how close before it reacts
+        if (d < influence) {
+          const strength = 2200; // repel strength
+          const t = 1 - d / influence; // 0..1
+          const ux = dx / Math.max(1, d);
+          const uy = dy / Math.max(1, d);
+
+          // Push away more as you get closer
+          ax += ux * strength * t;
+          ay += uy * strength * t;
+        }
+      }
+
+      // Integrate (semi-implicit Euler)
+      vel.x += ax * dt;
+      vel.y += ay * dt;
+
+      pos.x += vel.x * dt;
+      pos.y += vel.y * dt;
+
+      // Elastic band: clamp max distance from anchor
+      const maxLen = 180;
+      const len = Math.hypot(pos.x, pos.y);
+      if (len > maxLen) {
+        const s = maxLen / Math.max(1, len);
+        pos.x *= s;
+        pos.y *= s;
+        // damp velocity when hitting the band
+        vel.x *= 0.6;
+        vel.y *= 0.6;
+      }
+
+      // Keep button on-screen (prevents teleport/offscreen)
+      if (anchorTopLeftRef.current && btnSizeRef.current) {
+        const { w, h } = btnSizeRef.current;
+        const anchor = anchorTopLeftRef.current;
+
+        const pad = 10;
+        const minL = pad;
+        const minT = pad;
+        const maxL = window.innerWidth - w - pad;
+        const maxT = window.innerHeight - h - pad;
+
+        // current top-left
+        let L = anchor.left + pos.x;
+        let T = anchor.top + pos.y;
+
+        const clampedL = clamp(L, minL, maxL);
+        const clampedT = clamp(T, minT, maxT);
+
+        if (clampedL !== L) {
+          pos.x += clampedL - L;
+          vel.x *= -0.25;
+        }
+        if (clampedT !== T) {
+          pos.y += clampedT - T;
+          vel.y *= -0.25;
+        }
+      }
+
+      posRef.current = pos;
+      velRef.current = vel;
+
+      // Update React state (drives transform)
+      setNoOffset({ x: pos.x, y: pos.y });
+
+      raf = requestAnimationFrame(tick);
+    };
+
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
 
   return (
     <main
       ref={containerRef}
       className="relative min-h-screen overflow-hidden bg-gradient-to-br from-rose-100 via-pink-100 to-red-100"
       onMouseMove={(e) => {
-        if (acceptedRef.current) return;
-        if (!noBtnRef.current) return;
-
-        const b = noBtnRef.current.getBoundingClientRect();
-        const near =
-          e.clientX > b.left - 70 &&
-          e.clientX < b.right + 70 &&
-          e.clientY > b.top - 70 &&
-          e.clientY < b.bottom + 70;
-
-        if (near) moveNoAway(e.clientX, e.clientY);
+        mouseRef.current = { x: e.clientX, y: e.clientY };
       }}
-      onTouchStart={(e) => {
-        if (acceptedRef.current) return;
+      onMouseLeave={() => {
+        mouseRef.current = null;
+      }}
+      onTouchMove={(e) => {
         const t = e.touches[0];
-        if (t) moveNoAway(t.clientX, t.clientY);
+        if (t) mouseRef.current = { x: t.clientX, y: t.clientY };
+      }}
+      onTouchEnd={() => {
+        mouseRef.current = null;
       }}
     >
       {/* soft vignette */}
@@ -154,9 +244,7 @@ export default function Page() {
       {/* Center content */}
       <section className="relative z-10 flex min-h-screen items-center justify-center px-6">
         <div className="w-full max-w-2xl rounded-[2rem] bg-white/70 p-8 text-center shadow-2xl backdrop-blur-md sm:p-10">
-          <div className="mb-3 text-sm font-semibold tracking-wide text-rose-600">
-            💌 a very important question
-          </div>
+          <div className="mb-3 text-sm font-semibold tracking-wide text-rose-600">💌 a very important question</div>
 
           <h1 className="text-4xl font-extrabold tracking-tight text-zinc-900 sm:text-6xl">
             will you be my <span className="text-rose-600">valentine</span>
@@ -164,42 +252,39 @@ export default function Page() {
 
           <p className="mt-4 text-zinc-600">(there is a correct answer…)</p>
 
-          <div className="relative mt-8 flex items-center justify-center gap-4">
+          <div className="mt-8 flex items-center justify-center gap-4">
             <button
-              ref={yesBtnRef}
               onClick={handleYes}
               className="rounded-2xl bg-rose-600 px-7 py-4 text-lg font-bold text-white shadow-lg transition hover:scale-[1.03] active:scale-[0.98]"
             >
               Yes 💖
             </button>
 
-            {/* Invisible placeholder so layout still looks like "two buttons" */}
-            <button
-              type="button"
-              className="rounded-2xl bg-zinc-900/20 px-7 py-4 text-lg font-bold text-zinc-900/30 shadow-lg"
-              style={{ pointerEvents: "none" }}
-              aria-hidden="true"
-            >
-              No 🙃
-            </button>
-
-            {/* Real "No" button that dodges */}
             <button
               ref={noBtnRef}
               type="button"
-              className="rounded-2xl bg-zinc-900/85 px-7 py-4 text-lg font-bold text-white shadow-lg"
+              className="rounded-2xl bg-zinc-900/85 px-7 py-4 text-lg font-bold text-white shadow-lg select-none"
               style={{
-                position: "fixed",
-                left: noPos?.left ?? -9999,
-                top: noPos?.top ?? -9999,
-                zIndex: 50,
+                transform: `translate(${noOffset.x}px, ${noOffset.y}px)`,
+                willChange: "transform",
+                touchAction: "none",
+              }}
+              onMouseEnter={() => {
+                // ensure anchor is measured before physics has to behave
+                if (!anchorTopLeftRef.current) measureAnchor();
+              }}
+              onFocus={() => {
+                // keyboard focus shouldn't allow click; nudge away by setting "mouse" near it
+                if (noBtnRef.current) {
+                  const r = noBtnRef.current.getBoundingClientRect();
+                  mouseRef.current = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+                }
+              }}
+              onClick={(e) => {
+                // Extra safety: if someone somehow clicks it, just prevent default.
+                e.preventDefault();
               }}
               aria-label="No"
-              onMouseEnter={(e) => moveNoAway(e.clientX, e.clientY)}
-              onFocus={(e) => {
-                const rect = (e.target as HTMLButtonElement).getBoundingClientRect();
-                moveNoAway(rect.left + rect.width / 2, rect.top + rect.height / 2);
-              }}
             >
               No 🙃
             </button>
@@ -225,12 +310,7 @@ export default function Page() {
             </div>
 
             <button
-              onClick={() => {
-                acceptedRef.current = false;
-                setAccepted(false);
-                // When closing, put the "No" back beside "Yes"
-                setTimeout(() => placeNoNextToYes(), 0);
-              }}
+              onClick={() => setAccepted(false)}
               className="mt-6 rounded-2xl bg-zinc-900 px-6 py-3 font-semibold text-white transition hover:scale-[1.02] active:scale-[0.98]"
             >
               Close
