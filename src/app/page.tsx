@@ -9,7 +9,6 @@ const confetti = require("canvas-confetti");
 type Photo = {
   src: string;
   alt: string;
-  style: React.CSSProperties;
 };
 
 function clamp(n: number, min: number, max: number) {
@@ -21,7 +20,6 @@ function randInt(min: number, max: number) {
 }
 
 export default function Page() {
-  const containerRef = useRef<HTMLDivElement | null>(null);
   const noBtnRef = useRef<HTMLButtonElement | null>(null);
 
   const [accepted, setAccepted] = useState(false);
@@ -30,12 +28,12 @@ export default function Page() {
   // --- Photos (put your images in /public/photos and update filenames if needed) ---
   const photos: Photo[] = useMemo(
     () => [
-      { src: "/photos/1.jpg", alt: "Photo 1", style: { top: "8%", left: "6%", transform: "rotate(-6deg)" } },
-      { src: "/photos/2.jpg", alt: "Photo 2", style: { top: "12%", right: "7%", transform: "rotate(7deg)" } },
-      { src: "/photos/3.jpg", alt: "Photo 3", style: { bottom: "10%", left: "10%", transform: "rotate(5deg)" } },
-      { src: "/photos/4.jpg", alt: "Photo 4", style: { bottom: "14%", right: "9%", transform: "rotate(-7deg)" } },
-      { src: "/photos/5.JPG", alt: "Photo 5", style: { top: "42%", left: "2%", transform: "rotate(10deg)" } },
-      { src: "/photos/6.JPG", alt: "Photo 6", style: { top: "46%", right: "2%", transform: "rotate(-10deg)" } },
+      { src: "/photos/1.jpg", alt: "Photo 1" },
+      { src: "/photos/2.jpg", alt: "Photo 2" },
+      { src: "/photos/3.jpg", alt: "Photo 3" },
+      { src: "/photos/4.jpg", alt: "Photo 4" },
+      { src: "/photos/5.jpg", alt: "Photo 5" },
+      { src: "/photos/6.jpg", alt: "Photo 6" },
     ],
     []
   );
@@ -71,77 +69,56 @@ export default function Page() {
     const vw = window.innerWidth;
     const vh = window.innerHeight;
 
-    // Keep it around the sides (top, bottom, left, right bands)
-    // and avoid the central card a bit by biasing to edges.
-    const side = randInt(0, 3); // 0=top,1=right,2=bottom,3=left
-    const band = 80; // distance from edge
-    let left = 0;
-    let top = 0;
-
     const minL = pad;
     const minT = pad;
     const maxL = vw - btn.width - pad;
     const maxT = vh - btn.height - pad;
 
+    // Keep it around the sides (top, bottom, left, right bands), and away from the center card.
+    const side = randInt(0, 3); // 0=top,1=right,2=bottom,3=left
+    const band = 90;
+
+    let left = 0;
+    let top = 0;
+
     if (side === 0) {
-      // top band
       top = randInt(minT, clamp(band, minT, maxT));
       left = randInt(minL, maxL);
     } else if (side === 1) {
-      // right band
       left = randInt(clamp(maxL - band, minL, maxL), maxL);
       top = randInt(minT, maxT);
     } else if (side === 2) {
-      // bottom band
       top = randInt(clamp(maxT - band, minT, maxT), maxT);
       left = randInt(minL, maxL);
     } else {
-      // left band
       left = randInt(minL, clamp(band, minL, maxL));
       top = randInt(minT, maxT);
     }
 
-    // If mouse is very close to target, re-roll once to reduce "teleport into cursor"
+    // If mouse is close, reroll once so it doesn't land under the cursor.
     const m = mouseRef.current;
     if (m) {
       const cx = left + btn.width / 2;
       const cy = top + btn.height / 2;
       const d = Math.hypot(cx - m.x, cy - m.y);
-      if (d < 160) {
-        // re-roll quickly
-        const newSide = (side + randInt(1, 3)) % 4;
-        // quick deterministic re-roll
-        if (newSide === 0) {
-          top = randInt(minT, clamp(band, minT, maxT));
-          left = randInt(minL, maxL);
-        } else if (newSide === 1) {
-          left = randInt(clamp(maxL - band, minL, maxL), maxL);
-          top = randInt(minT, maxT);
-        } else if (newSide === 2) {
-          top = randInt(clamp(maxT - band, minT, maxT), maxT);
-          left = randInt(minL, maxL);
-        } else {
-          left = randInt(minL, clamp(band, minL, maxL));
-          top = randInt(minT, maxT);
-        }
+      if (d < 170) {
+        left = randInt(minL, maxL);
+        top = side % 2 === 0 ? (side === 0 ? minT : maxT) : top;
       }
     }
 
     setNoPos({ left: clamp(left, minL, maxL), top: clamp(top, minT, maxT) });
   };
 
-  // Initial placement near the Yes button (then it starts teleporting when you approach)
+  // Initial placement (so it appears quickly)
   useEffect(() => {
     const t = setTimeout(() => {
-      // place it roughly beside the center card initially
-      setNoPos({ left: window.innerWidth / 2 + 120, top: window.innerHeight / 2 + 80 });
+      setNoPos({ left: window.innerWidth * 0.12, top: window.innerHeight * 0.22 });
     }, 0);
 
-    const onResize = () => {
-      teleportNo();
-    };
-
+    const onResize = () => teleportNo();
     window.addEventListener("resize", onResize);
+
     return () => {
       clearTimeout(t);
       window.removeEventListener("resize", onResize);
@@ -149,12 +126,11 @@ export default function Page() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Periodic teleport so it keeps "skittering" around the edges
+  // Periodic teleport so it keeps skittering around the edges
   useEffect(() => {
     const id = window.setInterval(() => {
-      // Don’t teleport while the decline modal is open (so they can see/click other things)
       if (!declined && !accepted) teleportNo();
-    }, 650); // quick but not nauseating
+    }, 650);
     return () => window.clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [declined, accepted]);
@@ -162,18 +138,16 @@ export default function Page() {
   const maybeTeleportIfClose = (mx: number, my: number) => {
     if (!noBtnRef.current || !noPos) return;
     const r = noBtnRef.current.getBoundingClientRect();
-    // If cursor is within a radius, teleport away immediately
     const cx = r.left + r.width / 2;
     const cy = r.top + r.height / 2;
     const d = Math.hypot(cx - mx, cy - my);
 
-    const danger = 140; // make it hard to get close
+    const danger = 140;
     if (d < danger) teleportNo();
   };
 
   return (
     <main
-      ref={containerRef}
       className="relative min-h-screen overflow-hidden bg-gradient-to-br from-rose-100 via-pink-100 to-red-100"
       onMouseMove={(e) => {
         mouseRef.current = { x: e.clientX, y: e.clientY };
@@ -196,27 +170,62 @@ export default function Page() {
       {/* soft vignette */}
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.45),rgba(255,255,255,0)_55%)]" />
 
-      {/* Photos */}
-      {photos.map((p, i) => (
-        <div
-          key={i}
-          className="pointer-events-none absolute w-[160px] sm:w-[190px] md:w-[220px] lg:w-[240px] drop-shadow-xl"
-          style={p.style}
-        >
+      {/* MOBILE layout: photos in a grid ABOVE and BELOW so they never get hidden by the card */}
+      <div className="relative z-0 mx-auto w-full max-w-3xl px-4 pt-6 sm:hidden">
+        <div className="grid grid-cols-2 gap-4">
+          {photos.slice(0, 4).map((p) => (
+            <div key={p.src} className="rounded-3xl bg-white/70 p-2 shadow-xl backdrop-blur">
+              <img src={p.src} alt={p.alt} className="h-40 w-full rounded-2xl object-cover" draggable={false} />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* DESKTOP/TABLET collage: absolute photos, placed to avoid overlaps */}
+      <div className="pointer-events-none absolute inset-0 hidden sm:block">
+        {/* left column */}
+        <div className="absolute left-6 top-10 w-[210px] md:w-[240px] rotate-[-6deg] drop-shadow-xl">
           <div className="rounded-3xl bg-white/70 p-2 backdrop-blur">
-            <img
-              src={p.src}
-              alt={p.alt}
-              className="h-[170px] w-full rounded-2xl object-cover sm:h-[190px] md:h-[210px] lg:h-[230px]"
-              draggable={false}
-            />
+            <img src={photos[0].src} alt={photos[0].alt} className="h-[220px] w-full rounded-2xl object-cover md:h-[250px]" draggable={false} />
           </div>
         </div>
-      ))}
+
+        <div className="absolute left-8 bottom-10 w-[220px] md:w-[260px] rotate-[6deg] drop-shadow-xl">
+          <div className="rounded-3xl bg-white/70 p-2 backdrop-blur">
+            <img src={photos[2].src} alt={photos[2].alt} className="h-[230px] w-full rounded-2xl object-cover md:h-[270px]" draggable={false} />
+          </div>
+        </div>
+
+        {/* right column */}
+        <div className="absolute right-6 top-12 w-[210px] md:w-[240px] rotate-[7deg] drop-shadow-xl">
+          <div className="rounded-3xl bg-white/70 p-2 backdrop-blur">
+            <img src={photos[1].src} alt={photos[1].alt} className="h-[220px] w-full rounded-2xl object-cover md:h-[250px]" draggable={false} />
+          </div>
+        </div>
+
+        <div className="absolute right-8 bottom-12 w-[220px] md:w-[260px] rotate-[-7deg] drop-shadow-xl">
+          <div className="rounded-3xl bg-white/70 p-2 backdrop-blur">
+            <img src={photos[3].src} alt={photos[3].alt} className="h-[230px] w-full rounded-2xl object-cover md:h-[270px]" draggable={false} />
+          </div>
+        </div>
+
+        {/* mid-left & mid-right (smaller) */}
+        <div className="absolute left-2 top-1/2 -translate-y-1/2 w-[170px] md:w-[200px] rotate-[10deg] drop-shadow-xl">
+          <div className="rounded-3xl bg-white/60 p-2 backdrop-blur">
+            <img src={photos[4].src} alt={photos[4].alt} className="h-[180px] w-full rounded-2xl object-cover md:h-[210px]" draggable={false} />
+          </div>
+        </div>
+
+        <div className="absolute right-2 top-1/2 -translate-y-1/2 w-[170px] md:w-[200px] rotate-[-10deg] drop-shadow-xl">
+          <div className="rounded-3xl bg-white/60 p-2 backdrop-blur">
+            <img src={photos[5].src} alt={photos[5].alt} className="h-[180px] w-full rounded-2xl object-cover md:h-[210px]" draggable={false} />
+          </div>
+        </div>
+      </div>
 
       {/* Center content */}
-      <section className="relative z-10 flex min-h-screen items-center justify-center px-6">
-        <div className="w-full max-w-2xl rounded-[2rem] bg-white/70 p-8 text-center shadow-2xl backdrop-blur-md sm:p-10">
+      <section className="relative z-10 flex min-h-[70vh] items-center justify-center px-4 py-8 sm:min-h-screen sm:px-6">
+        <div className="w-full max-w-2xl rounded-[2rem] bg-white/70 p-6 text-center shadow-2xl backdrop-blur-md sm:p-10">
           <div className="mb-3 text-sm font-semibold tracking-wide text-rose-600">💌 a very important question</div>
 
           <h1 className="text-4xl font-extrabold tracking-tight text-zinc-900 sm:text-6xl">
@@ -225,21 +234,29 @@ export default function Page() {
 
           <p className="mt-4 text-zinc-600">(there is a correct answer…)</p>
 
-          <div className="mt-8 flex items-center justify-center gap-4">
+          <div className="mt-8 flex items-center justify-center">
             <button
               onClick={handleYes}
               className="rounded-2xl bg-rose-600 px-7 py-4 text-lg font-bold text-white shadow-lg transition hover:scale-[1.03] active:scale-[0.98]"
             >
               Yes 💖
             </button>
-
-            {/* Placeholder so the UI reads "Yes / No" even while real No teleports */}
-            <div className="rounded-2xl bg-zinc-900/10 px-7 py-4 text-lg font-bold text-zinc-900/30 shadow-lg">
-              No 🙃
-            </div>
           </div>
+
+          <p className="mt-6 text-xs text-zinc-500 sm:text-sm">P.S. There might be a “No” button… somewhere 😈</p>
         </div>
       </section>
+
+      {/* MOBILE bottom photos so card never hides them */}
+      <div className="relative z-0 mx-auto w-full max-w-3xl px-4 pb-10 sm:hidden">
+        <div className="grid grid-cols-2 gap-4">
+          {photos.slice(4).map((p) => (
+            <div key={p.src} className="rounded-3xl bg-white/70 p-2 shadow-xl backdrop-blur">
+              <img src={p.src} alt={p.alt} className="h-40 w-full rounded-2xl object-cover" draggable={false} />
+            </div>
+          ))}
+        </div>
+      </div>
 
       {/* Real teleporting NO button (clickable) */}
       <button
@@ -251,9 +268,9 @@ export default function Page() {
           top: noPos?.top ?? -9999,
         }}
         onMouseEnter={() => teleportNo()}
-        onMouseDown={() => teleportNo()} // makes it VERY hard to click
+        onMouseDown={() => teleportNo()}
+        onTouchStart={() => teleportNo()}
         onClick={(e) => {
-          // If they actually click, show the "sad" modal.
           e.stopPropagation();
           handleNo();
         }}
