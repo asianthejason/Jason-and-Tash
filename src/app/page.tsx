@@ -32,8 +32,8 @@ export default function Page() {
       { src: "/photos/2.jpg", alt: "Photo 2" },
       { src: "/photos/3.jpg", alt: "Photo 3" },
       { src: "/photos/4.jpg", alt: "Photo 4" },
-      { src: "/photos/5.jpg", alt: "Photo 5" },
-      { src: "/photos/6.jpg", alt: "Photo 6" },
+      { src: "/photos/5.JPG", alt: "Photo 5" },
+      { src: "/photos/6.JPG", alt: "Photo 6" },
     ],
     []
   );
@@ -232,7 +232,7 @@ export default function Page() {
             will you be my <span className="text-rose-600">valentine</span>
           </h1>
 
-          <p className="mt-4 text-zinc-600">(there is a correct answer…)</p>
+
 
           <div className="mt-8 flex items-center justify-center">
             <button
