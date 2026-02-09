@@ -130,7 +130,7 @@ export default function Page() {
   useEffect(() => {
     const id = window.setInterval(() => {
       if (!declined && !accepted) teleportNo();
-    }, 650);
+    }, 200);
     return () => window.clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [declined, accepted]);
