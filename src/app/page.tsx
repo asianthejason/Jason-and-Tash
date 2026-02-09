@@ -11,10 +11,15 @@ type Photo = {
 
 export default function Page() {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const yesBtnRef = useRef<HTMLButtonElement | null>(null);
   const noBtnRef = useRef<HTMLButtonElement | null>(null);
 
   const [accepted, setAccepted] = useState(false);
-  const [noPos, setNoPos] = useState<{ x: number; y: number } | null>(null);
+  const acceptedRef = useRef(false);
+
+
+  // "No" button is free to move, but it should START beside "Yes"
+  const [noPos, setNoPos] = useState<{ left: number; top: number } | null>(null);
 
   // Placeholders — add your images in /public/photos and update these filenames
   const photos: Photo[] = useMemo(
@@ -29,11 +34,36 @@ export default function Page() {
     []
   );
 
+  const placeNoNextToYes = () => {
+    if (!yesBtnRef.current || !noBtnRef.current) return;
+
+    const yes = yesBtnRef.current.getBoundingClientRect();
+    const no = noBtnRef.current.getBoundingClientRect();
+
+    const gap = 14;
+
+    // Position "No" just to the right of "Yes" (same vertical alignment)
+    setNoPos({
+      left: yes.right + gap,
+      top: yes.top + (yes.height - no.height) / 2,
+    });
+  };
+
   useEffect(() => {
-    // initialize "No" button position (center-right-ish)
-    if (!containerRef.current) return;
-    const rect = containerRef.current.getBoundingClientRect();
-    setNoPos({ x: rect.width * 0.62, y: rect.height * 0.62 });
+    // Wait a tick so the buttons have measured sizes
+    const t = setTimeout(() => placeNoNextToYes(), 0);
+
+    const onResize = () => {
+      // If not accepted yet, keep it nicely positioned by Yes on resize
+      if (!acceptedRef.current) placeNoNextToYes();
+    };
+
+    window.addEventListener("resize", onResize);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener("resize", onResize);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const popConfetti = () => {
@@ -44,43 +74,37 @@ export default function Page() {
   };
 
   const handleYes = () => {
+    acceptedRef.current = true;
     setAccepted(true);
     popConfetti();
   };
 
+  // Keep the "No" always teasingly close to the cursor while still escaping.
   const moveNoAway = (clientX: number, clientY: number) => {
-    if (!containerRef.current || !noBtnRef.current) return;
-    const box = containerRef.current.getBoundingClientRect();
+    if (!noBtnRef.current) return;
+
     const btn = noBtnRef.current.getBoundingClientRect();
 
-    const current = noPos ?? { x: box.width / 2, y: box.height / 2 };
+    // Tune these to taste:
+    const MIN_R = 90; // minimum distance away
+    const MAX_R = 160; // never farther than this
+    const pad = 12;
 
-    // cursor relative to container
-    const mx = clientX - box.left;
-    const my = clientY - box.top;
+    // Pick a random angle and radius in [MIN_R, MAX_R]
+    const angle = Math.random() * Math.PI * 2;
+    const r = MIN_R + Math.random() * (MAX_R - MIN_R);
 
-    // button center
-    const bx = current.x + btn.width / 2;
-    const by = current.y + btn.height / 2;
+    let left = clientX + Math.cos(angle) * r - btn.width / 2;
+    let top = clientY + Math.sin(angle) * r - btn.height / 2;
 
-    const dx = bx - mx;
-    const dy = by - my;
-    const dist = Math.max(1, Math.hypot(dx, dy));
+    // Clamp inside viewport
+    const maxL = window.innerWidth - btn.width - pad;
+    const maxT = window.innerHeight - btn.height - pad;
 
-    // push it away
-    const push = 140; // how aggressively it escapes
-    const nx = current.x + (dx / dist) * push;
-    const ny = current.y + (dy / dist) * push;
+    left = Math.min(Math.max(pad, left), maxL);
+    top = Math.min(Math.max(pad, top), maxT);
 
-    // clamp within container bounds with padding
-    const pad = 16;
-    const maxX = box.width - btn.width - pad;
-    const maxY = box.height - btn.height - pad;
-
-    setNoPos({
-      x: Math.min(Math.max(pad, nx), maxX),
-      y: Math.min(Math.max(pad, ny), maxY),
-    });
+    setNoPos({ left, top });
   };
 
   return (
@@ -88,19 +112,20 @@ export default function Page() {
       ref={containerRef}
       className="relative min-h-screen overflow-hidden bg-gradient-to-br from-rose-100 via-pink-100 to-red-100"
       onMouseMove={(e) => {
-        // if mouse gets near the "No" button, move it
-        if (!noBtnRef.current || !noPos) return;
+        if (acceptedRef.current) return;
+        if (!noBtnRef.current) return;
+
         const b = noBtnRef.current.getBoundingClientRect();
         const near =
-          e.clientX > b.left - 90 &&
-          e.clientX < b.right + 90 &&
-          e.clientY > b.top - 90 &&
-          e.clientY < b.bottom + 90;
+          e.clientX > b.left - 70 &&
+          e.clientX < b.right + 70 &&
+          e.clientY > b.top - 70 &&
+          e.clientY < b.bottom + 70;
 
         if (near) moveNoAway(e.clientX, e.clientY);
       }}
       onTouchStart={(e) => {
-        // mobile: if they touch anywhere, nudge the "No" away from that touch
+        if (acceptedRef.current) return;
         const t = e.touches[0];
         if (t) moveNoAway(t.clientX, t.clientY);
       }}
@@ -137,34 +162,43 @@ export default function Page() {
             will you be my <span className="text-rose-600">valentine</span>
           </h1>
 
-          <p className="mt-4 text-zinc-600">
-            (there is a correct answer…)
-          </p>
+          <p className="mt-4 text-zinc-600">(there is a correct answer…)</p>
 
           <div className="relative mt-8 flex items-center justify-center gap-4">
             <button
+              ref={yesBtnRef}
               onClick={handleYes}
               className="rounded-2xl bg-rose-600 px-7 py-4 text-lg font-bold text-white shadow-lg transition hover:scale-[1.03] active:scale-[0.98]"
             >
               Yes 💖
             </button>
 
-            {/* The "No" button is absolutely positioned so it can run away */}
+            {/* Invisible placeholder so layout still looks like "two buttons" */}
+            <button
+              type="button"
+              className="rounded-2xl bg-zinc-900/20 px-7 py-4 text-lg font-bold text-zinc-900/30 shadow-lg"
+              style={{ pointerEvents: "none" }}
+              aria-hidden="true"
+            >
+              No 🙃
+            </button>
+
+            {/* Real "No" button that dodges */}
             <button
               ref={noBtnRef}
               type="button"
               className="rounded-2xl bg-zinc-900/85 px-7 py-4 text-lg font-bold text-white shadow-lg"
               style={{
-                position: "absolute",
-                left: noPos?.x ?? 0,
-                top: noPos?.y ?? 0,
+                position: "fixed",
+                left: noPos?.left ?? -9999,
+                top: noPos?.top ?? -9999,
+                zIndex: 50,
               }}
               aria-label="No"
-              // If they somehow click it (keyboard / edge case), still dodge
               onMouseEnter={(e) => moveNoAway(e.clientX, e.clientY)}
               onFocus={(e) => {
                 const rect = (e.target as HTMLButtonElement).getBoundingClientRect();
-                moveNoAway(rect.left, rect.top);
+                moveNoAway(rect.left + rect.width / 2, rect.top + rect.height / 2);
               }}
             >
               No 🙃
@@ -184,16 +218,19 @@ export default function Page() {
       >
         <div className="rounded-[2rem] bg-white p-6 shadow-2xl sm:p-8">
           <div className="text-center">
-            <div className="text-2xl font-extrabold text-zinc-900 sm:text-3xl">
-              yay 🎉
-            </div>
+            <div className="text-2xl font-extrabold text-zinc-900 sm:text-3xl">yay 🎉</div>
             <div className="mt-2 text-lg text-zinc-700 sm:text-xl">
               le petit chef date awaits on <span className="font-bold">February 14th</span> @{" "}
               <span className="font-bold">8:15pm</span>
             </div>
 
             <button
-              onClick={() => setAccepted(false)}
+              onClick={() => {
+                acceptedRef.current = false;
+                setAccepted(false);
+                // When closing, put the "No" back beside "Yes"
+                setTimeout(() => placeNoNextToYes(), 0);
+              }}
               className="mt-6 rounded-2xl bg-zinc-900 px-6 py-3 font-semibold text-white transition hover:scale-[1.02] active:scale-[0.98]"
             >
               Close
