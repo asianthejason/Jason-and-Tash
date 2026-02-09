@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 // canvas-confetti sometimes lacks TS types depending on setup; require avoids build type errors.
- // eslint-disable-next-line @typescript-eslint/no-var-requires
+// eslint-disable-next-line @typescript-eslint/no-var-requires
 const confetti = require("canvas-confetti");
 
 type Photo = {
@@ -48,16 +48,14 @@ export default function Page() {
   };
 
   // --- "Elastic + repelling magnet" No button physics ---
-  // We keep the No button in the flex row (next to Yes), and animate it using translate().
-  // Anchor (0,0) is "beside Yes". The button is pulled back to anchor by a spring, and
-  // pushed away from the cursor when the cursor gets close.
+  // No button stays next to Yes in layout; we animate it via translate() with a spring + cursor repulsion.
   const [noOffset, setNoOffset] = useState({ x: 0, y: 0 });
 
   const posRef = useRef({ x: 0, y: 0 });
   const velRef = useRef({ x: 0, y: 0 });
   const mouseRef = useRef<{ x: number; y: number } | null>(null);
 
-  // Anchor position (top-left) of the No button when offset is (0,0)
+  // Anchor (top-left) of the No button when offset is (0,0)
   const anchorTopLeftRef = useRef<{ left: number; top: number } | null>(null);
   const btnSizeRef = useRef<{ w: number; h: number } | null>(null);
 
@@ -68,7 +66,6 @@ export default function Page() {
     velRef.current = { x: 0, y: 0 };
     setNoOffset({ x: 0, y: 0 });
 
-    // Next tick to ensure DOM has applied transform reset
     requestAnimationFrame(() => {
       if (!noBtnRef.current) return;
       const r = noBtnRef.current.getBoundingClientRect();
@@ -79,20 +76,15 @@ export default function Page() {
 
   useEffect(() => {
     measureAnchor();
-    const onResize = () => {
-      // Re-anchor on resize (keeps it beside Yes)
-      measureAnchor();
-    };
+    const onResize = () => measureAnchor();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // When closing the modal, let the No button calmly return to anchor
   useEffect(() => {
     if (!accepted) {
-      // small reset so it feels like it rebounds back
-      // (physics will do the rest)
+      // Let it rebound to home
       velRef.current = { x: 0, y: 0 };
     }
   }, [accepted]);
@@ -102,7 +94,7 @@ export default function Page() {
     let last = performance.now();
 
     const tick = (now: number) => {
-      const dt = Math.min(0.033, (now - last) / 1000); // cap dt for stability
+      const dt = Math.min(0.028, (now - last) / 1000); // smaller cap for stability
       last = now;
 
       const pos = posRef.current;
@@ -110,13 +102,12 @@ export default function Page() {
       const mouse = mouseRef.current;
 
       // Spring back to anchor: F = -k x - c v
-      const k = 55; // stiffness
-      const c = 12; // damping
+      const k = 65; // stiffness
+      const c = 14; // damping
 
       let ax = -k * pos.x - c * vel.x;
       let ay = -k * pos.y - c * vel.y;
 
-      // Repel from cursor if close ("magnet")
       if (mouse && anchorTopLeftRef.current && btnSizeRef.current) {
         const { w, h } = btnSizeRef.current;
         const anchor = anchorTopLeftRef.current;
@@ -129,16 +120,50 @@ export default function Page() {
         const dy = cy - mouse.y;
         const d = Math.hypot(dx, dy);
 
-        const influence = 140; // how close before it reacts
+        // Stronger, earlier repulsion so cursor never reaches it
+        const influence = 190; // reacts earlier
         if (d < influence) {
-          const strength = 2200; // repel strength
+          const strength = 4200; // stronger repel
           const t = 1 - d / influence; // 0..1
           const ux = dx / Math.max(1, d);
           const uy = dy / Math.max(1, d);
 
-          // Push away more as you get closer
-          ax += ux * strength * t;
-          ay += uy * strength * t;
+          ax += ux * strength * t * t;
+          ay += uy * strength * t * t;
+        }
+
+        // HARD SAFETY: if cursor ever enters an expanded rectangle around the button,
+        // immediately move the button out along the minimum-overlap direction.
+        const safe = 26; // extra buffer around button (prevents "touch")
+        const L = anchor.left + pos.x;
+        const T = anchor.top + pos.y;
+        const R = L + w;
+        const B = T + h;
+
+        const inX = mouse.x >= L - safe && mouse.x <= R + safe;
+        const inY = mouse.y >= T - safe && mouse.y <= B + safe;
+
+        if (inX && inY) {
+          const leftOverlap = mouse.x - (L - safe);
+          const rightOverlap = (R + safe) - mouse.x;
+          const topOverlap = mouse.y - (T - safe);
+          const botOverlap = (B + safe) - mouse.y;
+
+          // Move out along the smallest overlap axis (fastest exit)
+          const minX = Math.min(leftOverlap, rightOverlap);
+          const minY = Math.min(topOverlap, botOverlap);
+
+          if (minX < minY) {
+            // push horizontally
+            const dir = leftOverlap < rightOverlap ? -1 : 1;
+            pos.x += dir * (minX + 8);
+            vel.x = dir * 1200; // impulse
+          } else {
+            // push vertically
+            const dir = topOverlap < botOverlap ? -1 : 1;
+            pos.y += dir * (minY + 8);
+            vel.y = dir * 1200; // impulse
+          }
         }
       }
 
@@ -150,18 +175,17 @@ export default function Page() {
       pos.y += vel.y * dt;
 
       // Elastic band: clamp max distance from anchor
-      const maxLen = 180;
+      const maxLen = 170;
       const len = Math.hypot(pos.x, pos.y);
       if (len > maxLen) {
         const s = maxLen / Math.max(1, len);
         pos.x *= s;
         pos.y *= s;
-        // damp velocity when hitting the band
-        vel.x *= 0.6;
-        vel.y *= 0.6;
+        vel.x *= 0.55;
+        vel.y *= 0.55;
       }
 
-      // Keep button on-screen (prevents teleport/offscreen)
+      // Keep button on-screen
       if (anchorTopLeftRef.current && btnSizeRef.current) {
         const { w, h } = btnSizeRef.current;
         const anchor = anchorTopLeftRef.current;
@@ -172,7 +196,6 @@ export default function Page() {
         const maxL = window.innerWidth - w - pad;
         const maxT = window.innerHeight - h - pad;
 
-        // current top-left
         let L = anchor.left + pos.x;
         let T = anchor.top + pos.y;
 
@@ -192,7 +215,6 @@ export default function Page() {
       posRef.current = pos;
       velRef.current = vel;
 
-      // Update React state (drives transform)
       setNoOffset({ x: pos.x, y: pos.y });
 
       raf = requestAnimationFrame(tick);
@@ -268,21 +290,9 @@ export default function Page() {
                 transform: `translate(${noOffset.x}px, ${noOffset.y}px)`,
                 willChange: "transform",
                 touchAction: "none",
-              }}
-              onMouseEnter={() => {
-                // ensure anchor is measured before physics has to behave
-                if (!anchorTopLeftRef.current) measureAnchor();
-              }}
-              onFocus={() => {
-                // keyboard focus shouldn't allow click; nudge away by setting "mouse" near it
-                if (noBtnRef.current) {
-                  const r = noBtnRef.current.getBoundingClientRect();
-                  mouseRef.current = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-                }
-              }}
-              onClick={(e) => {
-                // Extra safety: if someone somehow clicks it, just prevent default.
-                e.preventDefault();
+                // Extra guarantee: cursor can never "touch" it (no hover/click),
+                // while still looking like a normal button.
+                pointerEvents: "none",
               }}
               aria-label="No"
             >
