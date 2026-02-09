@@ -243,7 +243,7 @@ export default function Page() {
             </button>
           </div>
 
-          <p className="mt-6 text-xs text-zinc-500 sm:text-sm">P.S. There might be a “No” button… somewhere 😈</p>
+
         </div>
       </section>
 
